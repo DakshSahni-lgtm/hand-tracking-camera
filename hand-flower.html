@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hand Flower</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0a0f;
+    color: #e8e4d9;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    padding: 20px;
+  }
+
+  h1 {
+    font-size: 18px;
+    font-weight: 400;
+    color: #8a8570;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  #canvas-wrap {
+    position: relative;
+    width: min(640px, 100%);
+    aspect-ratio: 4/3;
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid #1e1e2a;
+  }
+
+  #video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1); /* mirror selfie view */
+    display: block;
+  }
+
+  #flower-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+
+  #overlay-text {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 13px;
+    color: rgba(255,255,255,0.5);
+    white-space: nowrap;
+    pointer-events: none;
+  }
+
+  .controls {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-radius: 100px;
+    border: 1px solid #1e1e2a;
+    font-size: 13px;
+    color: #8a8570;
+    background: #0f0f18;
+  }
+
+  .badge .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+  }
+
+  .badge .val {
+    font-weight: 600;
+    color: #e8e4d9;
+    min-width: 32px;
+    text-align: right;
+  }
+
+  #start-btn {
+    padding: 10px 28px;
+    border-radius: 10px;
+    border: 1px solid #2e2e40;
+    background: #14141f;
+    color: #e8e4d9;
+    font-size: 14px;
+    cursor: pointer;
+    letter-spacing: 0.03em;
+    transition: background 0.15s, border-color 0.15s;
+  }
+
+  #start-btn:hover { background: #1e1e2e; border-color: #3e3e58; }
+  #start-btn:disabled { opacity: 0.5; cursor: default; }
+
+  #status {
+    font-size: 13px;
+    color: #6a6555;
+    text-align: center;
+    min-height: 18px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Hand Flower</h1>
+
+<div id="canvas-wrap">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="flower-canvas"></canvas>
+  <div id="overlay-text">✋ Left = stem height &nbsp;|&nbsp; 🤚 Right = bloom</div>
+</div>
+
+<div id="status">Click start to enable camera</div>
+
+<button id="start-btn">Start camera</button>
+
+<div class="controls">
+  <div class="badge">
+    <div class="dot" style="background:#4ade80;"></div>
+    Left (stem) <span class="val" id="stem-val">—</span>
+  </div>
+  <div class="badge">
+    <div class="dot" style="background:#f472b6;"></div>
+    Right (bloom) <span class="val" id="bloom-val">—</span>
+  </div>
+</div>
+
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+
+<script>
+const video = document.getElementById('video');
+const fc = document.getElementById('flower-canvas');
+const ctx = fc.getContext('2d');
+const statusEl = document.getElementById('status');
+const startBtn = document.getElementById('start-btn');
+const stemValEl = document.getElementById('stem-val');
+const bloomValEl = document.getElementById('bloom-val');
+
+// Smoothed values
+let stemPct = 0.4;
+let bloomPct = 0.2;
+let targetStem = 0.4;
+let targetBloom = 0.2;
+
+function dist(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function resizeCanvas() {
+  const rect = fc.parentElement.getBoundingClientRect();
+  fc.width = rect.width;
+  fc.height = rect.height;
+}
+
+// ─── Flower drawing ───────────────────────────────────────────────
+function drawFlower(stem, bloom) {
+  const W = fc.width, H = fc.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const baseX = W * 0.5;
+  const baseY = H * 0.94;
+
+  const minStem = H * 0.08;
+  const maxStem = H * 0.72;
+  const stemH = minStem + stem * (maxStem - minStem);
+  const tipX = baseX;
+  const tipY = baseY - stemH;
+
+  // ── Stem ──
+  const cp1x = baseX + Math.sin(stem * 0.8) * W * 0.06;
+  const cp1y = baseY - stemH * 0.35;
+  const cp2x = baseX - Math.sin(stem * 0.5) * W * 0.04;
+  const cp2y = baseY - stemH * 0.7;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(baseX, baseY);
+  ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, tipX, tipY);
+  ctx.strokeStyle = '#2d7a3a';
+  ctx.lineWidth = Math.max(3, W * 0.013);
+  ctx.lineCap = 'round';
+  ctx.shadowColor = 'rgba(45,122,58,0.4)';
+  ctx.shadowBlur = 8;
+  ctx.stroke();
+  ctx.restore();
+
+  // ── Leaves (appear after some stem growth) ──
+  if (stem > 0.15) {
+    const leafOpacity = Math.min(1, (stem - 0.15) / 0.3);
+    const leafT = 0.42; // position along stem
+    const lx = baseX + (cp1x - baseX) * leafT * 2;
+    const ly = baseY + (tipY - baseY) * leafT;
+    const leafSize = (W * 0.06) + bloom * (W * 0.05);
+
+    ctx.save();
+    ctx.globalAlpha = leafOpacity * 0.9;
+
+    // Left leaf
+    ctx.beginPath();
+    ctx.moveTo(lx, ly);
+    ctx.quadraticCurveTo(lx - leafSize * 2.2, ly - leafSize * 0.8, lx - leafSize * 0.2, ly - leafSize * 1.5);
+    ctx.quadraticCurveTo(lx - leafSize * 0.7, ly - leafSize * 0.3, lx, ly);
+    ctx.fillStyle = '#3a9148';
+    ctx.fill();
+
+    // Right leaf
+    ctx.beginPath();
+    ctx.moveTo(lx, ly);
+    ctx.quadraticCurveTo(lx + leafSize * 2.2, ly - leafSize * 0.8, lx + leafSize * 0.2, ly - leafSize * 1.5);
+    ctx.quadraticCurveTo(lx + leafSize * 0.7, ly - leafSize * 0.3, lx, ly);
+    ctx.fillStyle = '#4cad5e';
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  // ── Petals ──
+  const minPetalR = W * 0.018;
+  const maxPetalR = W * 0.13;
+  const petalR = minPetalR + bloom * (maxPetalR - minPetalR);
+  const petalDist = petalR * 0.85;
+  const petalCount = 8;
+
+  const petalColors = [
+    '#e8507a', '#f472b6', '#c084fc',
+    '#818cf8', '#60a5fa', '#34d399',
+    '#fbbf24', '#fb7185'
+  ];
+
+  // Draw petals
+  for (let i = 0; i < petalCount; i++) {
+    const angle = (i / petalCount) * Math.PI * 2 - Math.PI / 2;
+    const px = tipX + Math.cos(angle) * petalDist;
+    const py = tipY + Math.sin(angle) * petalDist;
+
+    ctx.save();
+    ctx.globalAlpha = 0.85 + bloom * 0.1;
+
+    // Shadow petal
+    ctx.beginPath();
+    ctx.ellipse(px + 2, py + 2, petalR, petalR * 0.52, angle, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fill();
+
+    // Colored petal
+    ctx.beginPath();
+    ctx.ellipse(px, py, petalR, petalR * 0.52, angle, 0, Math.PI * 2);
+    ctx.fillStyle = petalColors[i % petalColors.length];
+    ctx.fill();
+
+    // Petal sheen
+    ctx.beginPath();
+    ctx.ellipse(px - petalR*0.15, py - petalR*0.15, petalR * 0.3, petalR * 0.18, angle, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  // ── Center ──
+  const centerR = Math.max(W * 0.022, petalR * 0.35);
+
+  // Outer glow
+  const glow = ctx.createRadialGradient(tipX, tipY, 0, tipX, tipY, centerR * 1.8);
+  glow.addColorStop(0, 'rgba(255,220,60,0.25)');
+  glow.addColorStop(1, 'rgba(255,220,60,0)');
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(tipX, tipY, centerR * 1.8, 0, Math.PI * 2);
+  ctx.fillStyle = glow;
+  ctx.fill();
+  ctx.restore();
+
+  // Main center disc
+  const disc = ctx.createRadialGradient(tipX - centerR*0.25, tipY - centerR*0.25, 0, tipX, tipY, centerR);
+  disc.addColorStop(0, '#ffe566');
+  disc.addColorStop(0.5, '#f5a623');
+  disc.addColorStop(1, '#b7650a');
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(tipX, tipY, centerR, 0, Math.PI * 2);
+  ctx.fillStyle = disc;
+  ctx.shadowColor = 'rgba(200,120,0,0.5)';
+  ctx.shadowBlur = 10;
+  ctx.fill();
+  ctx.restore();
+
+  // Center dots pattern
+  ctx.save();
+  const dotCount = 10;
+  for (let d = 0; d < dotCount; d++) {
+    const da = (d / dotCount) * Math.PI * 2;
+    const dr = centerR * 0.6;
+    ctx.beginPath();
+    ctx.arc(tipX + Math.cos(da)*dr, tipY + Math.sin(da)*dr, centerR*0.07, 0, Math.PI*2);
+    ctx.fillStyle = '#7c3d0a';
+    ctx.fill();
+  }
+  // Center dot
+  ctx.beginPath();
+  ctx.arc(tipX, tipY, centerR * 0.12, 0, Math.PI * 2);
+  ctx.fillStyle = '#5a2d0a';
+  ctx.fill();
+  ctx.restore();
+}
+
+// ─── Animation loop ───────────────────────────────────────────────
+function animate() {
+  const lerp = 0.1;
+  stemPct += (targetStem - stemPct) * lerp;
+  bloomPct += (targetBloom - bloomPct) * lerp;
+  drawFlower(stemPct, bloomPct);
+  requestAnimationFrame(animate);
+}
+
+// ─── Start camera ─────────────────────────────────────────────────
+startBtn.addEventListener('click', async () => {
+  startBtn.disabled = true;
+  statusEl.textContent = 'Requesting camera access…';
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: 640, height: 480 }
+    });
+  } catch (err) {
+    statusEl.textContent = 'Camera error: ' + err.message;
+    startBtn.disabled = false;
+    return;
+  }
+
+  video.srcObject = stream;
+  await new Promise(r => { video.onloadedmetadata = r; });
+  resizeCanvas();
+
+  statusEl.textContent = 'Loading hand-tracking model…';
+
+  const hands = new Hands({
+    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+  });
+
+  hands.setOptions({
+    maxNumHands: 2,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.65,
+    minTrackingConfidence: 0.5
+  });
+
+  hands.onResults(results => {
+    let leftSeen = false, rightSeen = false;
+
+    if (results.multiHandLandmarks && results.multiHandedness) {
+      results.multiHandLandmarks.forEach((lms, i) => {
+        const label = results.multiHandedness[i].label;
+        // MediaPipe returns mirrored labels in selfie mode
+        const isLeft = label === 'Right';
+        const isRight = label === 'Left';
+
+        const thumb = lms[4];
+        const indexTip = lms[8];
+        const d = dist(thumb, indexTip);
+
+        // Normalize: ~0.02 = fully pinched, ~0.28 = fully open
+        const pct = Math.min(1, Math.max(0, (d - 0.02) / 0.26));
+
+        if (isLeft) {
+          targetStem = pct;
+          leftSeen = true;
+          stemValEl.textContent = Math.round(pct * 100) + '%';
+        }
+        if (isRight) {
+          targetBloom = pct;
+          rightSeen = true;
+          bloomValEl.textContent = Math.round(pct * 100) + '%';
+        }
+      });
+    }
+
+    if (!leftSeen) stemValEl.textContent = '—';
+    if (!rightSeen) bloomValEl.textContent = '—';
+
+    const count = results.multiHandLandmarks?.length || 0;
+    if (count === 0) {
+      statusEl.textContent = 'Show your hands to the camera ✋';
+    } else if (count === 1) {
+      statusEl.textContent = 'One hand detected — show both for full control';
+    } else {
+      statusEl.textContent = 'Both hands detected ✓';
+    }
+  });
+
+  const camera = new Camera(video, {
+    onFrame: async () => { await hands.send({ image: video }); },
+    width: 640,
+    height: 480
+  });
+
+  await camera.start();
+  startBtn.style.display = 'none';
+  statusEl.textContent = 'Show your hands ✋';
+});
+
+// ─── Init ─────────────────────────────────────────────────────────
+resizeCanvas();
+animate();
+window.addEventListener('resize', resizeCanvas);
+</script>
+</body>
+</html>
